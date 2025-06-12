@@ -15,7 +15,6 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 ADMIN_ID = int(os.getenv("ADMIN_ID") or 0)
-# تغییر مهم برای Render: استفاده از RENDER_EXTERNAL_HOSTNAME به جای VERCEL_URL
 BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
 if not all([BOT_TOKEN, CHANNEL_ID, ADMIN_ID, BASE_WEBHOOK_URL]):
@@ -39,7 +38,7 @@ async def handle_new_post(message: types.Message):
         post_data = {"type": "photo", "file_id": message.photo[-1].file_id, "caption": message.caption or ""}
     elif message.text:
         post_data = {"type": "text", "content": message.text}
-
+    
     if post_data:
         await post_queue.put(post_data)
         await message.answer(f"✅ پست شما با موفقیت به صف انتظار اضافه شد.\nتعداد پست‌های در صف: {post_queue.qsize()}")
@@ -64,7 +63,7 @@ async def scheduler():
             start_total_seconds = START_TIME.hour * 3600 + START_TIME.minute * 60
             end_total_seconds = END_TIME.hour * 3600 + END_TIME.minute * 60
             total_seconds_in_day = end_total_seconds - start_total_seconds
-
+            
             interval = total_seconds_in_day / POSTS_PER_DAY if POSTS_PER_DAY > 0 else 3600
 
             now_time = datetime.now().time()
@@ -75,6 +74,8 @@ async def scheduler():
             else:
                 logging.info("Scheduler waiting: outside active hours or queue is empty. Checking in 30 seconds.")
                 await asyncio.sleep(30) 
+            # اگر scheduler به صورت مداوم اجرا شود، این sleep ها برای کنترل نرخ مفید هستند.
+            # در مدل Serverless، فقط برای جلوگیری از حلقه بی نهایت در یک Cold Start استفاده می شود.
         except Exception as e:
             logging.error(f"Error in scheduler loop: {e}")
             await asyncio.sleep(60) 
@@ -86,7 +87,7 @@ async def on_startup_fastapi():
     webhook_url = f"https://{BASE_WEBHOOK_URL}/webhook"
     await bot.set_webhook(webhook_url)
     logging.info(f"Webhook set to {webhook_url}.")
-
+    
     asyncio.create_task(scheduler())
     logging.info("Scheduler background task initiated (Render background workers can run continuously).")
 
@@ -100,12 +101,14 @@ async def telegram_webhook(request: Request):
         update_json = await request.json()
         update = types.Update.model_validate(update_json)
         await dp.feed_update(bot, update)
-
+        
         return Response(status_code=200, content=json.dumps({"ok": True}), media_type="application/json")
     except Exception as e:
         logging.error(f"Error processing webhook: {e}")
         return Response(status_code=500, content=json.dumps({"ok": False, "error": str(e)}), media_type="application/json")
 
+# تغییر مهم: این Endpoint حالا هر دو متد GET و POST را قبول می کند
+@app.get("/run-scheduler") 
 @app.post("/run-scheduler")
 async def run_scheduler_endpoint():
     try:
@@ -119,7 +122,7 @@ async def run_scheduler_endpoint():
             return {"status": "Queue is empty"}
     except Exception as e:
         logging.error(f"Error in run-scheduler endpoint: {e}")
-        return {"status": "Error", "message": str(e)}, 500
+        return Response(status_code=500, content=json.dumps({"ok": False, "error": str(e)}), media_type="application/json")
 
 if __name__ == "__main__":
     import uvicorn
